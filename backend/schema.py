@@ -10,6 +10,13 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 import json
 
+# Import dual-value transformation functions
+from core.transformation_config import (
+    is_dual_value_transformation, 
+    generate_auto_value,
+    DUAL_VALUE_TRANSFORMATIONS
+)
+
 logger = logging.getLogger(__name__)
 
 @dataclass
@@ -114,6 +121,134 @@ class TransformationSchema:
         logger.info(f"Generated {len(combinations)} single-value combinations")
         return combinations
     
+    def generate_dual_value_combinations(self) -> List[Dict[str, Any]]:
+        """
+        Generate combinations using dual-value priority order system
+        
+        Priority Order:
+        1st: User Selected Values (individual transformations)
+        2nd: Auto-Generated Values (opposite values)
+        3rd: Random Combinations (fill remaining slots)
+        """
+        if not self.transformations:
+            logger.warning("No transformations available for dual-value combination generation")
+            return [{}]
+        
+        # Get enabled transformations only
+        enabled_transformations = [t for t in self.transformations if t.enabled]
+        
+        if not enabled_transformations:
+            logger.warning("No enabled transformations found")
+            return [{}]
+        
+        combinations = []
+        
+        # Separate dual-value and regular transformations
+        dual_value_transformations = []
+        regular_transformations = []
+        
+        for transformation in enabled_transformations:
+            if is_dual_value_transformation(transformation.tool_type):
+                dual_value_transformations.append(transformation)
+            else:
+                regular_transformations.append(transformation)
+        
+        # PRIORITY 1: User Selected Values (individual transformations)
+        logger.info("Generating Priority 1: User Selected Values")
+        for transformation in dual_value_transformations:
+            # Extract user value from parameters
+            user_params = transformation.parameters.copy()
+            
+            # Handle dual-value parameter format
+            if isinstance(transformation.parameters, dict):
+                # Check if it's already in dual-value format
+                for param_name, param_value in transformation.parameters.items():
+                    if isinstance(param_value, dict) and 'user_value' in param_value:
+                        user_params[param_name] = param_value['user_value']
+            
+            combination = {transformation.tool_type: user_params}
+            combinations.append(combination)
+            logger.debug(f"Added user value combination: {combination}")
+        
+        # PRIORITY 2: Auto-Generated Values (opposite values)
+        logger.info("Generating Priority 2: Auto-Generated Values")
+        for transformation in dual_value_transformations:
+            auto_params = {}
+            
+            # Generate auto values for each parameter
+            for param_name, param_value in transformation.parameters.items():
+                if isinstance(param_value, dict) and 'user_value' in param_value:
+                    # Already in dual-value format
+                    user_value = param_value['user_value']
+                    auto_value = generate_auto_value(transformation.tool_type, user_value)
+                    auto_params[param_name] = auto_value
+                else:
+                    # Single value - generate auto value
+                    auto_value = generate_auto_value(transformation.tool_type, param_value)
+                    auto_params[param_name] = auto_value
+            
+            combination = {transformation.tool_type: auto_params}
+            combinations.append(combination)
+            logger.debug(f"Added auto value combination: {combination}")
+        
+        # PRIORITY 3: Random Combinations (if more images needed)
+        logger.info("Generating Priority 3: Random Combinations")
+        if len(combinations) < self.sampling_config.images_per_original:
+            remaining_slots = self.sampling_config.images_per_original - len(combinations)
+            
+            # Generate combinations of both user and auto values
+            all_values = []
+            
+            # Collect all user and auto values
+            for transformation in dual_value_transformations:
+                user_params = transformation.parameters.copy()
+                auto_params = {}
+                
+                for param_name, param_value in transformation.parameters.items():
+                    if isinstance(param_value, dict) and 'user_value' in param_value:
+                        user_params[param_name] = param_value['user_value']
+                        auto_params[param_name] = param_value.get('auto_value', 
+                                                               generate_auto_value(transformation.tool_type, param_value['user_value']))
+                    else:
+                        auto_params[param_name] = generate_auto_value(transformation.tool_type, param_value)
+                
+                all_values.append((transformation.tool_type, user_params, auto_params))
+            
+            # Generate combinations
+            additional_combinations = []
+            
+            # Both user values combination
+            if len(dual_value_transformations) >= 2:
+                both_user_combo = {}
+                for tool_type, user_params, _ in all_values:
+                    both_user_combo[tool_type] = user_params
+                additional_combinations.append(both_user_combo)
+            
+            # Both auto values combination
+            if len(dual_value_transformations) >= 2:
+                both_auto_combo = {}
+                for tool_type, _, auto_params in all_values:
+                    both_auto_combo[tool_type] = auto_params
+                additional_combinations.append(both_auto_combo)
+            
+            # Mixed combinations (user + auto)
+            if len(dual_value_transformations) >= 2:
+                for i, (tool_type1, user_params1, auto_params1) in enumerate(all_values):
+                    for j, (tool_type2, user_params2, auto_params2) in enumerate(all_values):
+                        if i != j:
+                            mixed_combo = {
+                                tool_type1: user_params1,
+                                tool_type2: auto_params2
+                            }
+                            additional_combinations.append(mixed_combo)
+            
+            # Add random combinations up to the limit
+            random.shuffle(additional_combinations)
+            combinations.extend(additional_combinations[:remaining_slots])
+        
+        logger.info(f"Generated {len(combinations)} dual-value combinations with priority order")
+        return combinations
+    
     def apply_intelligent_sampling(self, combinations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Apply intelligent sampling to reduce combination count
@@ -150,8 +285,19 @@ class TransformationSchema:
         Generate transformation configurations for a single image
         Returns list of configs to apply to the image
         """
-        # Generate all combinations
-        all_combinations = self.generate_single_value_combinations()
+        # Check if we have dual-value transformations
+        has_dual_value_transformations = any(
+            is_dual_value_transformation(t.tool_type) 
+            for t in self.transformations if t.enabled
+        )
+        
+        # Generate combinations based on system type
+        if has_dual_value_transformations:
+            logger.info(f"Using dual-value combination generation for image {image_id}")
+            all_combinations = self.generate_dual_value_combinations()
+        else:
+            logger.info(f"Using single-value combination generation for image {image_id}")
+            all_combinations = self.generate_single_value_combinations()
         
         # Apply sampling strategy
         if self.sampling_config.strategy == "intelligent":
@@ -176,12 +322,28 @@ class TransformationSchema:
                 "config_id": f"{image_id}_config_{i+1}",
                 "image_id": image_id,
                 "transformations": config,
-                "order": i + 1
+                "order": i + 1,
+                "priority_type": self._get_priority_type(config, i) if has_dual_value_transformations else "single_value"
             }
             configs_with_metadata.append(config_with_metadata)
         
         logger.info(f"Generated {len(configs_with_metadata)} transformation configs for image {image_id}")
         return configs_with_metadata
+    
+    def _get_priority_type(self, config: Dict[str, Any], order: int) -> str:
+        """Determine the priority type of a configuration"""
+        dual_value_count = sum(1 for tool_type in config.keys() if is_dual_value_transformation(tool_type))
+        
+        if dual_value_count == 1:
+            # Single transformation - could be user or auto value
+            if order < dual_value_count:
+                return "user_value"
+            else:
+                return "auto_value"
+        elif dual_value_count > 1:
+            return "combination"
+        else:
+            return "regular"
     
     def set_sampling_config(self, images_per_original: int = 4, strategy: str = "intelligent", 
                            fixed_combinations: int = 2, random_seed: Optional[int] = None) -> None:
@@ -196,13 +358,29 @@ class TransformationSchema:
     
     def get_combination_count_estimate(self) -> int:
         """Estimate total number of possible combinations including original"""
-        enabled_count = len([t for t in self.transformations if t.enabled])
-        if enabled_count == 0:
+        enabled_transformations = [t for t in self.transformations if t.enabled]
+        if not enabled_transformations:
             return 1
         
-        # For single-value system: 2^n (including original file)
-        # Original file (no transformations) + all transformation combinations
-        return (2 ** enabled_count)
+        # Check if we have dual-value transformations
+        dual_value_transformations = [t for t in enabled_transformations if is_dual_value_transformation(t.tool_type)]
+        regular_transformations = [t for t in enabled_transformations if not is_dual_value_transformation(t.tool_type)]
+        
+        if dual_value_transformations:
+            # For dual-value system: Calculate based on priority order
+            dual_count = len(dual_value_transformations)
+            regular_count = len(regular_transformations)
+            
+            # Minimum guaranteed: 2 * dual_count (user + auto values)
+            # Maximum possible: includes all combinations
+            min_combinations = 2 * dual_count
+            max_combinations = min_combinations + (2 ** dual_count) + (2 ** regular_count)
+            
+            # Return the minimum guaranteed for UI display
+            return min_combinations
+        else:
+            # For single-value system: 2^n (including original file)
+            return (2 ** len(enabled_transformations))
     
     def validate_configuration(self) -> Tuple[bool, List[str]]:
         """

@@ -13,7 +13,8 @@ from pydantic import BaseModel, validator
 from core.transformation_config import (
     is_dual_value_transformation, 
     generate_auto_value, 
-    get_dual_value_range
+    get_dual_value_range,
+    calculate_max_images_per_original
 )
 
 router = APIRouter(prefix="/image-transformations", tags=["transformations"])
@@ -532,3 +533,121 @@ def generate_version():
     except Exception as e:
         logger.error(f"Error generating version: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to generate version: {str(e)}")
+
+
+@router.post("/calculate-max-images")
+def calculate_max_images_endpoint(
+    release_version: str = Body(..., embed=True),
+    db: Session = Depends(get_db)
+):
+    """
+    Calculate maximum images per original for UI display
+    Shows the calculated limit before user clicks Release button
+    """
+    try:
+        # Get transformations for the release version
+        transformations = db.query(ImageTransformation).filter(
+            ImageTransformation.release_version == release_version,
+            ImageTransformation.is_enabled == True
+        ).all()
+
+        # Convert to list format for calculation
+        transformation_list = []
+        for t in transformations:
+            transformation_list.append({
+                "transformation_type": t.transformation_type,
+                "enabled": t.is_enabled,
+                "is_dual_value": t.is_dual_value,
+                "parameters": t.parameters
+            })
+
+        # Calculate max images
+        result = calculate_max_images_per_original(transformation_list)
+        
+        # Add additional info for UI
+        result.update({
+            "release_version": release_version,
+            "total_transformations": len(transformation_list),
+            "calculation_timestamp": datetime.now().isoformat()
+        })
+
+        logger.info(f"Calculated max images for version {release_version}: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"Error calculating max images for version {release_version}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to calculate max images: {str(e)}")
+
+
+@router.get("/priority-preview/{release_version}")
+def get_priority_preview(
+    release_version: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get a preview of the priority order for dual-value transformations
+    Shows what images will be generated in what order
+    """
+    try:
+        # Get transformations for the release version
+        transformations = db.query(ImageTransformation).filter(
+            ImageTransformation.release_version == release_version,
+            ImageTransformation.is_enabled == True
+        ).all()
+
+        preview = {
+            "release_version": release_version,
+            "has_dual_value": False,
+            "priority_order": [],
+            "total_guaranteed_images": 0
+        }
+
+        dual_value_transformations = []
+        for t in transformations:
+            if is_dual_value_transformation(t.transformation_type):
+                dual_value_transformations.append(t)
+                preview["has_dual_value"] = True
+
+        if dual_value_transformations:
+            # Generate priority order preview
+            priority_order = []
+            
+            # Priority 1: User values
+            for i, t in enumerate(dual_value_transformations, 1):
+                priority_order.append({
+                    "priority": 1,
+                    "order": i,
+                    "type": "user_value",
+                    "transformation": t.transformation_type,
+                    "parameters": t.parameters,
+                    "description": f"User selected {t.transformation_type}"
+                })
+            
+            # Priority 2: Auto values
+            for i, t in enumerate(dual_value_transformations, len(dual_value_transformations) + 1):
+                auto_params = {}
+                for param_name, param_value in t.parameters.items():
+                    if isinstance(param_value, dict) and 'user_value' in param_value:
+                        auto_params[param_name] = param_value.get('auto_value', 
+                                                               generate_auto_value(t.transformation_type, param_value['user_value']))
+                    else:
+                        auto_params[param_name] = generate_auto_value(t.transformation_type, param_value)
+                
+                priority_order.append({
+                    "priority": 2,
+                    "order": i,
+                    "type": "auto_value",
+                    "transformation": t.transformation_type,
+                    "parameters": auto_params,
+                    "description": f"Auto-generated {t.transformation_type} (opposite value)"
+                })
+            
+            preview["priority_order"] = priority_order
+            preview["total_guaranteed_images"] = len(priority_order)
+
+        logger.info(f"Generated priority preview for version {release_version}")
+        return preview
+
+    except Exception as e:
+        logger.error(f"Error generating priority preview for version {release_version}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate priority preview: {str(e)}")

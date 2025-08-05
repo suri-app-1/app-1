@@ -113,6 +113,54 @@ def get_dual_value_range(transformation_type: str) -> dict:
     """Get parameter range for dual-value transformation"""
     return DUAL_VALUE_RANGES.get(transformation_type, {})
 
+def calculate_max_images_per_original(transformations: list) -> dict:
+    """
+    Calculate max images per original for UI display
+    Returns both minimum guaranteed and maximum possible counts
+    """
+    if not transformations:
+        return {"min": 1, "max": 1, "has_dual_value": False}
+    
+    # Count dual-value and regular transformations
+    dual_value_count = 0
+    regular_count = 0
+    
+    for transformation in transformations:
+        if transformation.get('enabled', True):
+            tool_type = transformation.get('transformation_type') or transformation.get('tool_type')
+            if is_dual_value_transformation(tool_type):
+                dual_value_count += 1
+            else:
+                regular_count += 1
+    
+    if dual_value_count > 0:
+        # Dual-value system
+        # Minimum: 2 images per dual-value transformation (user + auto)
+        min_images = 2 * dual_value_count
+        
+        # Maximum: includes all possible combinations
+        max_images = min_images + (2 ** dual_value_count) + regular_count
+        
+        return {
+            "min": min_images,
+            "max": max_images,
+            "has_dual_value": True,
+            "dual_value_count": dual_value_count,
+            "regular_count": regular_count
+        }
+    else:
+        # Single-value system
+        total_count = regular_count
+        max_images = 2 ** total_count if total_count > 0 else 1
+        
+        return {
+            "min": max_images,
+            "max": max_images,
+            "has_dual_value": False,
+            "dual_value_count": 0,
+            "regular_count": regular_count
+        }
+
 # Transformation categories
 BASIC_TRANSFORMATIONS = [
     'resize', 'rotate', 'flip', 'brightness', 'contrast', 'blur'
