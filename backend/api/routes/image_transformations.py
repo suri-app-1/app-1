@@ -26,6 +26,44 @@ def generate_transformation_version():
     return f"version_auto_{now.strftime('%Y_%m_%d_%H_%M')}"
 
 
+def update_transformation_combination_count(db: Session, release_version: str):
+    """Calculate and update transformation_combination_count for all transformations in a release version"""
+    try:
+        # Get all transformations for this release version
+        transformations = db.query(ImageTransformation).filter(
+            ImageTransformation.release_version == release_version,
+            ImageTransformation.is_enabled == True
+        ).all()
+
+        # Convert to list format for calculation
+        transformation_list = []
+        for t in transformations:
+            transformation_list.append({
+                "transformation_type": t.transformation_type,
+                "enabled": t.is_enabled,
+                "is_dual_value": getattr(t, 'is_dual_value', False),
+                "parameters": t.parameters
+            })
+
+        # Calculate max images using our existing function
+        result = calculate_max_images_per_original(transformation_list)
+        max_images = result.get('max_images_per_original', 100)
+
+        # Update all transformations in this release version with the calculated count
+        db.query(ImageTransformation).filter(
+            ImageTransformation.release_version == release_version
+        ).update({
+            "transformation_combination_count": max_images
+        })
+        
+        db.commit()
+        logger.info(f"Updated combination count for release {release_version}: {max_images}")
+        
+    except Exception as e:
+        logger.error(f"Error updating combination count for {release_version}: {str(e)}")
+        db.rollback()
+
+
 class TransformationCreate(BaseModel):
     transformation_type: str
     parameters: Dict[str, Any]
@@ -169,6 +207,9 @@ def create_transformation(
         db.add(db_transformation)
         db.commit()
         db.refresh(db_transformation)
+
+        # Calculate and update combination count for this release version
+        update_transformation_combination_count(db, transformation.release_version)
 
         logger.info(f"Created transformation: {db_transformation.id} of type {db_transformation.transformation_type}")
         return db_transformation
@@ -472,6 +513,10 @@ def create_transformations_batch(
         for transformation in db_transformations:
             db.refresh(transformation)
 
+        # Calculate and update combination count for the release version
+        if db_transformations and db_transformations[0].release_version:
+            update_transformation_combination_count(db, db_transformations[0].release_version)
+
         logger.info(f"Created {len(db_transformations)} transformations in batch")
         return db_transformations
 
@@ -651,3 +696,24 @@ def get_priority_preview(
     except Exception as e:
         logger.error(f"Error generating priority preview for version {release_version}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to generate priority preview: {str(e)}")
+
+
+@router.post("/update-combination-count")
+def update_combination_count_endpoint(
+    request: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually trigger combination count update for testing
+    """
+    try:
+        release_version = request.get("release_version")
+        if not release_version:
+            raise HTTPException(status_code=400, detail="release_version is required")
+        
+        result = update_transformation_combination_count(db, release_version)
+        return {"success": True, "updated_count": result, "release_version": release_version}
+        
+    except Exception as e:
+        logger.error(f"Error updating combination count: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update combination count: {str(e)}")

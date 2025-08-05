@@ -464,20 +464,17 @@ def get_dataset_stats(dataset_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to get dataset stats: {str(e)}")
 
 @router.get("/versions")
-async def get_release_versions(status: str = "PENDING"):
+async def get_release_versions(status: str = "PENDING", db: Session = Depends(get_db)):
     """Get all release versions by status with combination counts"""
     try:
-        db = get_db()
-        cursor = db.cursor()
+        # Query using SQLAlchemy ORM
+        results = db.query(
+            ImageTransformation.release_version,
+            ImageTransformation.transformation_combination_count
+        ).filter(
+            ImageTransformation.status == status
+        ).distinct().order_by(ImageTransformation.created_at.desc()).all()
         
-        cursor.execute("""
-            SELECT DISTINCT release_version, transformation_combination_count
-            FROM image_transformations 
-            WHERE status = ?
-            ORDER BY created_at DESC
-        """, (status,))
-        
-        results = cursor.fetchall()
         versions = []
         
         for row in results:
@@ -488,8 +485,6 @@ async def get_release_versions(status: str = "PENDING"):
                 "version": release_version,
                 "max_combinations": combination_count
             })
-        
-        db.close()
         
         return {
             "success": True,
