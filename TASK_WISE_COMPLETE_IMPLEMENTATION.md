@@ -15,7 +15,7 @@ Complete task-by-task implementation from dual-value system to ZIP creation and 
 |------|--------|-------------|
 | **Task 1** | ✅ **Complete** | Fix Dependencies and Backend Startup |
 | **Task 2** | ✅ **Complete** | Update Database Schema for Dual-Value System |
-| **Task 3** | ✅ **Complete** | Implement Dual-Value Auto-Generation Logic |
+| **Task 3** | ✅ **Complete** (🐛 **Bug Found**) | Implement Dual-Value Auto-Generation Logic |
 | **Task 4** | ❌ **Pending** | Update Image Processing Pipeline |
 | **Task 5** | ❌ **Pending** | Fix Export System Integration |
 | **Task 6** | ❌ **Pending** | Update Frontend UI for Dual-Value System |
@@ -90,13 +90,28 @@ python main.py  # Backend starts successfully on port 12000
 ---
 
 ## 🚀 TASK 3: IMPLEMENT DUAL-VALUE AUTO-GENERATION LOGIC
-**Status:** ✅ Complete | **Commit:** 130d61d
+**Status:** ✅ Complete | **Commit:** 130d61d | **Bug Found:** Database max count issue
 
 ### **What was completed:**
 - ✅ Created auto-generation function for 5 special tools
 - ✅ Updated transformation config with dual-value support
 - ✅ Implemented priority order logic (User → Auto → Random)
 - ✅ Added API endpoints for UI integration
+
+### **🐛 CRITICAL BUG IDENTIFIED (Task 3 Bug Fix Required):**
+**Issue:** Database `transformation_combination_count` column saves incorrect value (100) instead of calculated max (15)
+**Root Cause:** `update_transformation_combination_count()` function uses hardcoded value instead of API calculation result
+**Status:** 🔄 Bug documented, fix in progress
+**Branch:** `feature/database-max-count-fix`
+**Files Affected:** `/backend/api/routes/image_transformations.py`
+
+**Bug Details:**
+- ✅ API `/calculate-max-images` returns correct values (min:6, max:15)
+- ✅ Database column exists and can be updated
+- ❌ Update function saves hardcoded 100 instead of calculated 15
+- ❌ Frontend "Images per Original" field shows wrong maximum
+
+**Fix Required:** Update `update_transformation_combination_count()` to use `calculate_max_images_for_transformations()` result
 
 ### **Files modified:**
 - ✅ `/backend/core/transformation_config.py` - Added dual-value tool definitions and auto-generation logic
@@ -343,7 +358,7 @@ WHERE release_version = 'v1'
 |------|-------------|--------|----------------|
 | 1 | Fix Dependencies | ✅ Complete | requirements.txt (verified), backend startup |
 | 2 | Database Schema | ✅ Complete | models.py, image_transformations.py, transformation_config.py |
-| 3 | Dual-Value Logic | ❌ Pending | transformation_config.py, schema.py |
+| 3 | Dual-Value Logic | ✅ Complete (🐛 Bug Found) | transformation_config.py, schema.py, image_transformations.py |
 | 4 | Image Processing | ❌ Pending | image_generator.py, image_transformer.py |
 | 5 | Export System | ❌ Pending | enhanced_export.py, release.py |
 | 6 | Multi-Dataset | ❌ Pending | release.py, image_generator.py |
