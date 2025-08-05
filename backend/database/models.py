@@ -230,7 +230,7 @@ class Release(Base):
 
 
 class ImageTransformation(Base):
-    """Global image transformation configurations"""
+    """Global image transformation configurations with dual-value support"""
     __tablename__ = "image_transformations"
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -251,11 +251,16 @@ class ImageTransformation(Base):
     # NEW: Maximum possible transformation combinations for this release version
     transformation_combination_count = Column(Integer, nullable=True)  # 2^n - 1 where n = enabled transformations
     
+    # NEW: Dual-value system support
+    is_dual_value = Column(Boolean, default=False)            # True for dual-value transformations
+    dual_value_parameters = Column(JSON, nullable=True)       # {"angle": {"user_value": 45, "auto_value": -45}}
+    dual_value_enabled = Column(Boolean, default=False)       # Whether dual-value mode is active
+    
     # Relationship to Release
     release = relationship("Release", back_populates="transformations")
     
     def __repr__(self):
-        return f"<ImageTransformation(id='{self.id}', type='{self.transformation_type}', version='{self.release_version}', status='{self.status}')>"
+        return f"<ImageTransformation(id='{self.id}', type='{self.transformation_type}', version='{self.release_version}', status='{self.status}', dual_value='{self.is_dual_value}')>"
 
 
 

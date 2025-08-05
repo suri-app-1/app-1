@@ -74,6 +74,45 @@ SYMMETRIC_TRANSFORMATIONS = [
     'rotate', 'brightness', 'contrast', 'shear', 'hue', 'saturation', 'gamma'
 ]
 
+# =====================================================================
+# DUAL-VALUE TRANSFORMATION SYSTEM
+# =====================================================================
+
+# Tools that support dual-value auto-generation system
+# User selects one value, system auto-generates opposite value
+DUAL_VALUE_TRANSFORMATIONS = [
+    'rotate',      # -180° to +180°
+    'hue',         # -30 to +30
+    'shear',       # -30° to +30°
+    'brightness',  # -0.5 to +0.5 (relative)
+    'contrast'     # -0.5 to +0.5 (relative)
+]
+
+# Dual-value parameter ranges (for auto-generation)
+DUAL_VALUE_RANGES = {
+    'rotate': {'min': -180, 'max': 180, 'step': 0.1, 'default': 0},
+    'hue': {'min': -30, 'max': 30, 'step': 0.1, 'default': 0},
+    'shear': {'min': -30, 'max': 30, 'step': 0.1, 'default': 0},
+    'brightness': {'min': -0.5, 'max': 0.5, 'step': 0.01, 'default': 0},
+    'contrast': {'min': -0.5, 'max': 0.5, 'step': 0.01, 'default': 0}
+}
+
+def is_dual_value_transformation(transformation_type: str) -> bool:
+    """Check if transformation supports dual-value system"""
+    return transformation_type in DUAL_VALUE_TRANSFORMATIONS
+
+def generate_auto_value(transformation_type: str, user_value: float) -> float:
+    """Generate automatic opposite value for dual-value transformations"""
+    if not is_dual_value_transformation(transformation_type):
+        return user_value
+    
+    # For symmetric transformations, generate opposite value
+    return -user_value
+
+def get_dual_value_range(transformation_type: str) -> dict:
+    """Get parameter range for dual-value transformation"""
+    return DUAL_VALUE_RANGES.get(transformation_type, {})
+
 # Transformation categories
 BASIC_TRANSFORMATIONS = [
     'resize', 'rotate', 'flip', 'brightness', 'contrast', 'blur'

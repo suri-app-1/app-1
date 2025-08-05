@@ -10,6 +10,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from database.database import get_db
 from database.models import ImageTransformation
 from pydantic import BaseModel, validator
+from core.transformation_config import (
+    is_dual_value_transformation, 
+    generate_auto_value, 
+    get_dual_value_range
+)
 
 router = APIRouter(prefix="/image-transformations", tags=["transformations"])
 logger = logging.getLogger(__name__)
@@ -31,6 +36,11 @@ class TransformationCreate(BaseModel):
     release_id: Optional[str] = None
     parameter_ranges: Optional[Dict[str, List[float]]] = None  # {"angle": [10, 45], "brightness": [-20, 20]}
     range_enabled_params: Optional[List[str]] = None  # ["angle", "brightness"]
+    
+    # NEW: Dual-value system support
+    is_dual_value: bool = False
+    dual_value_parameters: Optional[Dict[str, Dict[str, float]]] = None  # {"angle": {"user_value": 45, "auto_value": -45}}
+    dual_value_enabled: bool = False
 
 
 class TransformationUpdate(BaseModel):
@@ -44,6 +54,11 @@ class TransformationUpdate(BaseModel):
     release_version: Optional[str] = None
     parameter_ranges: Optional[Dict[str, List[float]]] = None
     range_enabled_params: Optional[List[str]] = None
+    
+    # NEW: Dual-value system support
+    is_dual_value: Optional[bool] = None
+    dual_value_parameters: Optional[Dict[str, Dict[str, float]]] = None
+    dual_value_enabled: Optional[bool] = None
 
 
 class ReleaseVersionUpdate(BaseModel):
@@ -64,6 +79,11 @@ class TransformationResponse(BaseModel):
     release_id: Optional[str] = None
     parameter_ranges: Optional[Dict[str, List[float]]] = None
     range_enabled_params: Optional[List[str]] = None
+    
+    # NEW: Dual-value system fields
+    is_dual_value: bool = False
+    dual_value_parameters: Optional[Dict[str, Dict[str, float]]] = None
+    dual_value_enabled: bool = False
 
     @validator('parameters', pre=True)
     def parse_parameters(cls, v):
@@ -73,6 +93,27 @@ class TransformationResponse(BaseModel):
             except json.JSONDecodeError:
                 return {}
         return v
+
+
+def process_dual_value_parameters(transformation: TransformationCreate) -> Dict[str, Any]:
+    """Process dual-value parameters for transformation"""
+    dual_value_params = {}
+    
+    # Check if this transformation supports dual-value system
+    if is_dual_value_transformation(transformation.transformation_type):
+        transformation.is_dual_value = True
+        
+        # Process each parameter for dual-value generation
+        for param_name, user_value in transformation.parameters.items():
+            if isinstance(user_value, (int, float)):
+                auto_value = generate_auto_value(transformation.transformation_type, user_value)
+                dual_value_params[param_name] = {
+                    "user_value": user_value,
+                    "auto_value": auto_value
+                }
+                logger.info(f"Generated dual-value for {param_name}: user={user_value}, auto={auto_value}")
+    
+    return dual_value_params
 
 
 @router.post("/", response_model=TransformationResponse)
@@ -102,6 +143,9 @@ def create_transformation(
                 transformation.release_version = generate_transformation_version()
                 logger.info(f"Created new release version: {transformation.release_version}")
 
+        # Process dual-value parameters
+        dual_value_params = process_dual_value_parameters(transformation)
+        
         # Create new transformation
         db_transformation = ImageTransformation(
             id=str(uuid.uuid4()),
@@ -114,7 +158,11 @@ def create_transformation(
             status=transformation.status,
             release_id=transformation.release_id,
             parameter_ranges=transformation.parameter_ranges,
-            range_enabled_params=transformation.range_enabled_params
+            range_enabled_params=transformation.range_enabled_params,
+            # NEW: Dual-value system fields
+            is_dual_value=transformation.is_dual_value,
+            dual_value_parameters=dual_value_params if dual_value_params else None,
+            dual_value_enabled=bool(dual_value_params)
         )
 
         db.add(db_transformation)
